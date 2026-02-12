@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileZilla Decrypter (Browser-based)</title>
+    <meta name="description" content="Decrypt FileZilla SiteManager XML exports securely in your browser using WebCrypto and TweetNaCl.">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/tweetnacl@1.0.3/nacl.min.js"></script>
+
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .fade-in { animation: fadeIn 0.5s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .drag-active { border-color: #3b82f6; background-color: #eff6ff; }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 p-6">
+
+    <div class="absolute top-4 right-4 z-10">
+        <button id="lang-toggle" class="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full shadow-sm border border-slate-200 text-sm font-medium hover:bg-slate-50 transition-colors">
+            <span class="text-lg">🇺🇸</span> <span id="lang-label">English</span>
+        </button>
+    </div>
+
+    <div id="app" class="max-w-6xl mx-auto space-y-8 mt-6">
+        <div class="text-center space-y-2">
+            <h1 class="text-3xl font-bold text-slate-900 flex items-center justify-center gap-3">
+                <i data-lucide="file-code" class="w-10 h-10 text-blue-600"></i>
+                FileZilla Decrypter
+            </h1>
+            <p class="text-slate-500">
+                <span data-i18n="subtitle">Decrypt FileZilla Exports (Hybrid Crypt: X25519 + AES-GCM)</span> <br/>
+                <span class="text-xs opacity-70 font-mono bg-green-100 text-green-800 px-1 rounded">Engine: TweetNaCl Lib + WebCrypto (v1.0)</span>
+            </p>
+        </div>
+
+        <div id="crypto-warning" class="hidden max-w-2xl mx-auto bg-red-100 border border-red-200 text-red-700 p-4 rounded-lg text-center text-sm">
+            <p class="font-bold" data-i18n="warnTitle">Warning: WebCrypto API unavailable!</p>
+            <p data-i18n="warnText">Browsers block crypto functions on insecure connections. Please use HTTPS or localhost.</p>
+        </div>
+
+        <div id="drop-zone" class="border-4 border-dashed border-slate-300 rounded-xl p-12 text-center transition-all cursor-pointer hover:border-blue-400 hover:bg-slate-100">
+            <input type="file" id="file-input" accept=".xml" class="hidden" />
+            <div id="drop-content-default" class="flex flex-col items-center text-slate-500">
+                <i data-lucide="upload" class="w-16 h-16 mb-4 text-slate-400"></i>
+                <p class="text-lg font-medium text-slate-700" data-i18n="dropTitle">Drop XML file here</p>
+                <p class="text-sm text-slate-400 mt-2" data-i18n="dropSub">or click to select</p>
+            </div>
+            <div id="drop-content-error" class="hidden flex flex-col items-center text-red-500">
+                <i data-lucide="shield-alert" class="w-12 h-12 mb-4"></i>
+                <p id="error-message" class="font-semibold">Error</p>
+                <button id="reset-btn-error" class="mt-4 text-sm underline" data-i18n="reset">Reset</button>
+            </div>
+        </div>
+
+        <div id="dashboard" class="hidden space-y-6 fade-in">
+            <div class="grid grid-cols-1 lg:grid-cols-[1fr,auto,auto] gap-4 bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+                <div class="flex items-center gap-2 text-slate-600">
+                    <i data-lucide="folder-open" class="w-5 h-5 text-blue-500"></i>
+                    <span id="filename-display" class="font-medium truncate">filename.xml</span>
+                    <span id="count-display" class="bg-slate-100 px-2 py-0.5 rounded text-xs text-slate-500 whitespace-nowrap">0 Items</span>
+                </div>
+
+                <div class="relative w-full lg:w-72">
+                    <div class="absolute left-3 top-1/2 -translate-y-1/2" id="status-icon-container">
+                        <i data-lucide="lock" class="w-4 h-4 text-orange-400"></i>
+                    </div>
+                    <input type="password" id="master-password" placeholder="Master Password"
+                        class="w-full pl-9 pr-4 py-2 bg-orange-50 border border-orange-100 rounded-md focus:ring-2 focus:ring-orange-300 outline-none text-sm placeholder:text-orange-300 text-orange-800 transition-all">
+                </div>
+
+                <div class="flex items-center gap-2 w-full lg:w-auto">
+                    <div class="relative w-full lg:w-64">
+                        <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                        <input type="text" id="search-input" placeholder="Search..."
+                            class="w-full pl-9 pr-4 py-2 bg-slate-100 border-none rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm">
+                    </div>
+                    <button id="reset-btn-main" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="Clear all">
+                        <i data-lucide="trash-2" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div id="server-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { FileZillaApp } from './src/app.js';
+        document.addEventListener('DOMContentLoaded', () => {
+            window.app = new FileZillaApp();
+        });
+    </script>
+</body>
+</html>
