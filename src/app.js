@@ -20,7 +20,10 @@ const translations = {
         noEntries: "No server entries found in file.",
         readError: "Error reading file.",
         copyTooltip: "Copy URL",
-        toggleTooltip: "Show/Hide"
+        toggleTooltip: "Show/Hide",
+        exportUris: "Export URIs",
+        qrTooltip: "Show QR Code",
+        qrMissingPass: "No password (still encrypted)"
     },
     de: {
         subtitle: "Entschlüsselt FileZilla Exporte (Hybrid Crypt: X25519 + AES-GCM)",
@@ -40,7 +43,10 @@ const translations = {
         noEntries: "Keine Server-Einträge in der Datei gefunden.",
         readError: "Fehler beim Lesen der Datei.",
         copyTooltip: "URL kopieren",
-        toggleTooltip: "Anzeigen/Verbergen"
+        toggleTooltip: "Anzeigen/Verbergen",
+        exportUris: "URIs exportieren",
+        qrTooltip: "QR-Code anzeigen",
+        qrMissingPass: "Ohne Passwort (noch verschlüsselt)"
     }
 };
 
@@ -77,6 +83,7 @@ export class FileZillaApp {
         this.elStatusIcon = document.getElementById('status-icon-container');
         this.elLangToggle = document.getElementById('lang-toggle');
         this.elLangLabel = document.getElementById('lang-label');
+        this.elExportUriBtn = document.getElementById('export-uri-btn');
 
         this.bindEvents();
         this.updateLanguage(); // Texte setzen
@@ -130,6 +137,11 @@ export class FileZillaApp {
         document.getElementById('reset-btn-error').addEventListener('click', (e) => { e.stopPropagation(); this.reset(); });
         document.getElementById('reset-btn-main').addEventListener('click', () => this.reset());
 
+        // Export URI Button
+        if (this.elExportUriBtn) {
+            this.elExportUriBtn.addEventListener('click', () => this.exportURIs());
+        }
+
         // Password Input
         let debounceTimer;
         this.elMasterPass.addEventListener('input', (e) => {
@@ -145,11 +157,16 @@ export class FileZillaApp {
             this.renderServers();
         });
 
+        // Click Delegation für dynamische Buttons
         document.addEventListener('click', (e) => {
             const btnCopy = e.target.closest('[data-action="copy"]');
             if (btnCopy) this.handleCopy(btnCopy);
+            
             const btnToggle = e.target.closest('[data-action="toggle-pass"]');
             if (btnToggle) this.handleTogglePass(btnToggle);
+
+            const btnQr = e.target.closest('[data-action="toggle-qr"]');
+            if (btnQr) this.handleToggleQR(btnQr);
         });
     }
 
@@ -228,7 +245,7 @@ export class FileZillaApp {
         }
         this.elStatusIcon.innerHTML = `<i data-lucide="lock" class="w-4 h-4 text-orange-400"></i>`;
         this.renderIcons();
-        if (updated) this.renderServers();
+        if (updated) this.renderServers(); // Rendert neu und schließt dadurch ggf. offene QR-Container
     }
 
     handleTogglePass(btn) {
@@ -238,6 +255,40 @@ export class FileZillaApp {
             server.showPass = !server.showPass;
             this.renderServers();
         }
+    }
+
+    exportURIs() {
+        if (!this.servers || this.servers.length === 0) return;
+
+        // Generiere die URIs für jeden Server
+        const uriLines = this.servers.map(server => {
+            let proto = 'ftp';
+            if (server.protocol.includes('SFTP')) proto = 'sftp';
+            else if (server.protocol.includes('FTPS')) proto = 'ftps';
+            else if (server.protocol.includes('HTTP')) proto = server.protocol.toLowerCase().includes('https') ? 'https' : 'http';
+
+            const finalPass = server.decryptedValue || (server.passType !== 'crypt' ? server.password : '');
+            
+            const safeUser = encodeURIComponent(server.user);
+            const safePass = finalPass ? `:${encodeURIComponent(finalPass)}` : '';
+            const safePath = server.path ? `/${server.path.split(' / ').map(p => encodeURIComponent(p)).join('/')}` : '';
+
+            return `${proto}://${safeUser}${safePass}@${server.host}:${server.port}${safePath}`;
+        });
+
+        // Erstelle eine Textdatei und löse den Download aus
+        const blob = new Blob([uriLines.join('\n')], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        
+        const baseName = this.fileName ? this.fileName.replace(/\.xml$/i, '') : 'filezilla_export';
+        a.download = `${baseName}_uris.txt`;
+        
+        a.href = url;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     handleCopy(btn) {
@@ -263,6 +314,68 @@ export class FileZillaApp {
             setTimeout(() => { btn.innerHTML = originalContent; this.renderIcons(); }, 2000);
         } catch (e) { console.error("Copy failed", e); }
         document.body.removeChild(ta);
+    }
+
+    handleToggleQR(btn) {
+        const id = btn.dataset.id;
+        const server = this.servers.find(s => s.id === id);
+        if (!server) return;
+
+        const container = document.getElementById(`qr-container-${id}`);
+        const canvas = document.getElementById(`qr-canvas-${id}`);
+        const warningEl = document.getElementById(`qr-warning-${id}`);
+        
+        if (!container || !canvas) return;
+
+        // Container auf-/zuklappen
+        if (!container.classList.contains('hidden')) {
+            container.classList.add('hidden');
+            container.classList.remove('flex');
+            return;
+        }
+        
+        // Anzeigen (flex nutzen, damit es zentriert bleibt)
+        container.classList.remove('hidden');
+        container.classList.add('flex');
+
+        // Nur generieren, wenn es nicht schon passiert ist
+        if (canvas.dataset.rendered === "true") return;
+
+        // Protokoll ermitteln
+        let proto = 'ftp';
+        if (server.protocol.includes('SFTP')) proto = 'sftp';
+        else if (server.protocol.includes('FTPS')) proto = 'ftps';
+        else if (server.protocol.includes('HTTP')) proto = server.protocol.toLowerCase().includes('https') ? 'https' : 'http';
+
+        // WICHTIG: Prüfen, ob das Passwort noch verschlüsselt ist
+        const isMissingPassword = server.passType === 'crypt' && !server.decryptedValue;
+        const finalPass = server.decryptedValue || (server.passType !== 'crypt' ? server.password : '');
+        
+        const safeUser = encodeURIComponent(server.user);
+        const safePass = finalPass ? `:${encodeURIComponent(finalPass)}` : '';
+        const safePath = server.path ? `/${server.path.split(' / ').map(p => encodeURIComponent(p)).join('/')}` : '';
+
+        const uri = `${proto}://${safeUser}${safePass}@${server.host}:${server.port}${safePath}`;
+
+        // Warnung einblenden, falls das Passwort fehlt
+        if (isMissingPassword && warningEl) {
+            warningEl.classList.remove('hidden');
+        }
+
+        // bwip-js ausführen
+        try {
+            window.bwipjs.toCanvas(canvas, {
+                bcid: 'qrcode',
+                text: uri,
+                scale: 3, 
+                padding: 2,
+                backgroundcolor: 'FFFFFF'
+            });
+            canvas.dataset.rendered = "true";
+        } catch (e) {
+            console.error("QR Code Fehler:", e);
+            container.innerHTML = `<span class="text-xs text-red-500">QR Error</span>`;
+        }
     }
 
     renderServers() {
@@ -341,10 +454,17 @@ export class FileZillaApp {
                         <span class="text-xs text-slate-500 font-medium">${s.protocol}</span>
                     </div>
                 </div>
-                <button data-action="copy" data-id="${s.id}" class="text-slate-400 hover:text-blue-600 shrink-0" title="${this.t('copyTooltip')}">
-                    <i data-lucide="copy" class="w-5 h-5"></i>
-                </button>
+                
+                <div class="flex items-center gap-1 shrink-0">
+                    <button data-action="toggle-qr" data-id="${s.id}" class="p-1.5 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded transition-colors" title="${this.t('qrTooltip')}">
+                        <i data-lucide="qr-code" class="w-5 h-5"></i>
+                    </button>
+                    <button data-action="copy" data-id="${s.id}" class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="${this.t('copyTooltip')}">
+                        <i data-lucide="copy" class="w-5 h-5"></i>
+                    </button>
+                </div>
             </div>
+            
             <div class="space-y-2 text-sm">
                 <div class="flex items-center gap-3 text-slate-600">
                     <i data-lucide="globe" class="w-4 h-4 text-slate-400 shrink-0"></i>
@@ -356,7 +476,21 @@ export class FileZillaApp {
                 </div>
                 ${passSection}
             </div>
-            ${s.path ? `<div class="mt-auto pt-2 border-t border-slate-100"><p class="text-xs text-slate-400 truncate flex items-center gap-1"><i data-lucide="folder-open" class="w-3 h-3"></i> ${this.escapeHtml(s.path)}</p></div>` : ''}
+            
+            ${s.path ? `<div class="pt-2 border-t border-slate-100"><p class="text-xs text-slate-400 truncate flex items-center gap-1"><i data-lucide="folder-open" class="w-3 h-3"></i> ${this.escapeHtml(s.path)}</p></div>` : '<div class="mt-auto"></div>'}
+            
+            <div id="qr-container-${s.id}" class="hidden flex-col items-center justify-center pt-4 border-t border-slate-100 fade-in">
+                
+                <div id="qr-warning-${s.id}" class="hidden mb-3 px-2 py-1 bg-orange-50 text-orange-600 border border-orange-200 rounded text-[11px] font-medium items-center gap-1.5 shadow-sm">
+                    <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> 
+                    ${this.t('qrMissingPass')}
+                </div>
+                
+                <div class="bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
+                    <canvas id="qr-canvas-${s.id}" class="max-w-full block" style="image-rendering: pixelated;"></canvas>
+                </div>
+                <span class="text-[11px] text-slate-400 mt-2 font-medium">Scan to Connect</span>
+            </div>
         </div>`;
     }
 

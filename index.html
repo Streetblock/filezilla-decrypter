@@ -9,6 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/tweetnacl@1.0.3/nacl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bwip-js@4.8.0/dist/bwip-js.min.js"></script>
 
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
@@ -78,6 +79,12 @@
                         <input type="text" id="search-input" placeholder="Search..."
                             class="w-full pl-9 pr-4 py-2 bg-slate-100 border-none rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm">
                     </div>
+                    
+                    <button id="export-uri-btn" class="flex items-center gap-1 p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors bg-white border border-slate-200 shadow-sm" title="Export as URIs">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span class="hidden sm:inline text-sm font-medium pr-1" data-i18n="exportUris">Export</span>
+                    </button>
+
                     <button id="reset-btn-main" class="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors" title="Clear all">
                         <i data-lucide="trash-2" class="w-5 h-5"></i>
                     </button>
@@ -85,7 +92,7 @@
             </div>
 
             <div id="server-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                </div>
+            </div>
         </div>
     </div>
 
